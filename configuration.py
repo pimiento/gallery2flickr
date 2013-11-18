@@ -1,5 +1,5 @@
 import imp
-__all__ = ["DOMAIN", "GALLERY", "FAST_MODE", "API_KEY", "SECRET", "TOKEN"]
+__all__ = ["DOMAIN", "GALLERY", "FAST_MODE", "API_KEY", "SECRET", "TOKEN", "USER_ID"]
 CONF_FILE = "config"
 
 config = imp.load_source("config", CONF_FILE).__dict__
@@ -10,3 +10,4 @@ FAST_MODE = config.get('FAST_MODE', 0)
 API_KEY = config.get('API_KEY', None)
 SECRET = config.get('SECRET', None)
 TOKEN = config.get('TOKEN', None)
+USER_ID = config.get('USER_ID', None)

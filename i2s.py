@@ -1,6 +1,7 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 import os
+import cPickle
 import urllib2
 from lxml import html
 from configuration import *
@@ -21,31 +22,23 @@ def get_flickr():
 
 flickr = get_flickr()
 
-def already_created(filename=LOG_FILE):
-    try:
-        content = open(filename, 'r')
-    except IOError:
-        raise IOError("There is no log-file %s" % filename)
-    else:
-        global UPLOADED
-        global PHOTOSETS
-        global COLLECTIONS
-        UPLOADED = {}
-        PHOTOSETS = {}
-        COLLECTIONS = {}
-        for log_line in content:
-            date, info = log_line.split('-:-')
-            line = info.replace('\\n', '\n')
-            flag, title, obj_path = line.split(":::")
-            if "photo" in flag:
-                UPLOADED[title] = obj_path
-            elif "album" in flag:
-                PHOTOSETS[title] = obj_path
-            elif "collection" in flag:
-                COLLECTIONS[title] = obj_path
-    finally:
-        content.close()
+def is_duplicate_photoset(title, photosets):
+    if len(filter(lambda x: x[0]==title, photosets)) > 1:
+        raise Exception("Duplicate photoset: %s: %s (%s)" % photoset)
 
+def get_photosets():
+    if USER_ID is None:
+        return []
+    res = flickr.photosets_getList(user_id=USER_ID, per_page=500)
+    if not len(res):
+        return []
+    photosets = [[x.find('title').text, x.find('description').text,
+                  x.attrib['id']] for x in res.getchildren()[0].getchildren()]
+    for photoset in photosets:
+        is_duplicate_photoset(photoset[0], photosets)
+    return photosets
+
+photosets = get_photosets()
 
 get_class_content = lambda elem, class_name: reduce(lambda x,y: x + " " + y,
                                                     map(lambda x:x.text_content().strip(),
@@ -54,41 +47,12 @@ get_class_content = lambda elem, class_name: reduce(lambda x,y: x + " " + y,
 
 get_link = lambda elem: elem.find('./div/a').attrib['href']
 get_tree = lambda link: html.fromstring(urllib2.urlopen(DOMAIN + link).read())
-get_image = lambda tree: DOMAIN + tree.find('.//div[@id="gsImageView"]').find('img').attrib['src']
+get_name = lambda path: os.path.basename(path.rstrip("/"))
+get_meta = lambda attributes: reduce(lambda x,y: x+"%s:::%s\n" % (y[0], y[1].replace('\n', '\\n')),
+                                     attributes.iteritems(), "")
+find_items = lambda tree: tree.find_class('giItemCell')
+find_albums = lambda tree: tree.find_class('giAlbumCell')
 
-
-def get_image_link(tree):
-    image_link = None
-    try:
-        image_link = get_image(tree)
-    except AttributeError:
-        # probably there is video instead of image
-        image_link = tree.find('.//div[@id="gsImageView"]//param[@name=\"FileName\"]').attrib['value']
-    return image_link
-
-def get_items_cells(link):
-    tree = get_tree(link)
-    items = tree.find_class('giItemCell')
-    return items, tree
-
-def additional_items(span_list):
-    items_list = []
-    for span in span_list:
-        # it isn't span for current page
-        if span.find('a') is not None:
-            items_cells, _ = get_items_cells(span.find('a').attrib['href'])
-            items_list += items_cells
-    return items_list
-
-def get_file(item, commint=True):
-    link = item['image']
-    filename = os.path.basename(link)
-    if not commint:
-        return filename
-    download_file = urllib2.urlopen(link).read()
-    with open(filename, 'w') as fn:
-        fn.write(download_file)
-    return filename
 
 def create_photoset(title, description, album_data):
     if title in PHOTOSETS:
@@ -132,89 +96,198 @@ def create_items(items_data, album):
         result.append([photo_id, item['title'], item['description']])
     return result
 
-def get_album_data(album, fast=FAST_MODE):
-    description = get_class_content(album, 'giDescription')
-    title = get_class_content(album, 'giTitle').split(":")[1].strip()
-    link = get_link(album)
-    date = get_class_content(album, 'date').split(":")[1].strip()
-    if description.lower() == 'no description':
-        description = date
-    inner_tree = get_tree(link)
-    inner_albums = inner_tree.find_class('giAlbumCell')
-    if fast:
-        if title in PHOTOSETS:
-            print('%s is already created' % title)
-            return PHOTOSETS[title]
-        elif title in COLLECTIONS:
-            print("collection %s is already created" % title)
-            return COLLECTIONS[title]
-    if bool(inner_albums):
-        # Superocollection
-        print("photoset %s contains another photosets" % title)
-        inner_albums = map(get_album_data, inner_albums)
-        if title in COLLECTIONS:
-            print("collection %s is already created" % title)
-            return COLLECTIONS[title]
+class Item(object):
+
+    def __init__(self, link, cur_dir):
+        self.cur_dir = cur_dir
+        self.link = link
+        self.name = get_name(self.link)
+        self.path = os.path.join(self.cur_dir, self.name)
+        self.tree = get_tree(self.link)
+        self.attributes = {'link': self.link, 'name': self.name,
+                           'path': self.path}
+
+    def run(self):
+        self.title = get_class_content(self.tree, 'giTitle')
+        self.update_data(self.get_data())
+        self.write_file()
+        return self
+
+    def write_file(self):
+        link = self.attributes['image']
+        if not os.path.isfile(self.path):
+            with open(self.path, 'w') as fd:
+                fd.write(urllib2.urlopen(link).read())
+            with open(self.path + ".meta", "w") as meta:
+                meta.write(self.get_meta())
+            my_log("File %s is writted" % self.path)
+
+    def get_meta(self):
+        return get_meta(self.attributes)
+
+    def get_data(self):
+        full_size = self.tree.find('.//a[@title=\"Full Size\"]')
+        if full_size is not None:
+            description_block = self.tree.find_class('giInfo')[0]
+            image_link = full_size
         else:
-            collection_id = flickr.collections_create(title=title, description=description).getchildren()[0].attrib['id']
-            print("create collection %s (%s)" % (title, collection_id))
-            my_log('collection:::%s:::%s' % (title, collection_id))
-            flickr.collections_editSets(collection_id=collection_id, photoset_ids=','.join(inner_albums))
-            return collection_id
-    else:
-        album_data = get_album_inner_data(link, description)
-        photoset = create_photoset(title, description, album_data)
-        return photoset
+            description_block = self.tree.find_class('gcBackground1')[0]
+            image_link = description_block.find(".//a")
 
-def get_album_inner_data(link, album_description):
-    items, tree = get_items_cells(link)
-    additional_pages = tree.find('.//div[@id="gsPages"]')
-    if additional_pages is not None:
-        items_plus = additional_items(additional_pages.getchildren()[0].getchildren())
-        items += items_plus
-    items_data = map(get_item_data, items)
-    items_id = create_items(items_data, album_description)
-    return items_id
+        date = get_class_content(description_block, 'date').split(":")[1]
+        owner = get_class_content(description_block, 'owner').split(":")[1]
+        description = get_class_content(description_block, 'giDescription')
 
-def get_item_data(item):
-    title = get_class_content(item, 'giTitle')
-    item_link = get_link(item)
-    data = get_data(item_link)
-    return dict(title=title, **data)
+        if image_link is None:
+            image_link = self.get_image_link(self.tree)
+        elif full_size is not None:
+            image_link = DOMAIN + image_link.attrib['href']
+        else:
+            # get original sized image
+            original_size_link = image_link.attrib['href']
+            new_tree = get_tree(original_size_link)
+            image_link = self.get_image_link(new_tree)
+        return dict(date=date.strip(), owner=owner.strip(),
+                    description=description, image=image_link.strip())
 
-def get_data(link):
-    tree = get_tree(link)
-    full_size = tree.find('.//a[@title=\"Full Size\"]')
-    if full_size is not None:
-        description_block = tree.find_class('giInfo')[0]
-        image_link = full_size.attrib['href']
-    else:
-        description_block = tree.find_class('gcBackground1')[0]
-        image_link = description_block.find(".//a")
+    def get_image_link(self, tree):
+        image_link = None
+        try:
+            image_link = DOMAIN + tree.find('.//div[@id="gsImageView"]').find('img').attrib['src']
+        except AttributeError:
+            # probably there is video instead of image
+            image_link = tree.find('.//div[@id="gsImageView"]//param[@name=\"FileName\"]').attrib['value']
+        return image_link
 
-    date = get_class_content(description_block, 'date').split(":")[1]
-    owner = get_class_content(description_block, 'owner').split(":")[1]
-    description = get_class_content(description_block, 'giDescription')
+    def update_data(self, data):
+        for key, value in data.iteritems():
+            self.attributes[key] = value
 
-    if image_link is None:
-        image_link = get_image_link(tree)
-    elif full_size is not None:
-        image_link = DOMAIN + image_link
-    else:
-        # get original sized image
-        original_size_link = DOMAIN + image_link.attrib['href']
-        new_tree = get_tree(link)
-        image_link = get_image_link(new_tree)
-    return dict(date=date.strip(),owner=owner.strip(),description=description,
-                image=image_link.strip())
+    def dumps(self):
+        return self.attributes
+
+
+class Album(object):
+
+    def __init__(self, link, cur_dir="./", data={}):
+        self.link = link
+        self.name = get_name(self.link)
+        self.cur_dir = os.path.join(cur_dir, self.name)
+        self.tree = get_tree(link)
+        attributes = data
+        attributes['name'] = self.name
+        attributes['dir'] = self.cur_dir
+        self.attributes = attributes
+        self.albums = []
+        self.items = []
+
+    def get_meta(self, cur_dir):
+        attributes = self.attributes
+        attributes['dir'] = cur_dir
+        return get_meta(attributes)
+
+    def run(self):
+        if not os.path.isdir(self.cur_dir):
+            os.mkdir(self.cur_dir)
+            with open(os.path.join(self.cur_dir, "meta"), "w") as meta:
+                meta.write(self.get_meta(self.cur_dir))
+            my_log("Album %s created" % self.cur_dir)
+
+        albums, items = self.get_albums_n_items()
+        if len(albums) and len(items):
+            # If album has another albums and sole items too
+            # we should create album for that sole objects
+            # because Flickr can not contain sole object with albums in a collection
+            self.update_albums(albums)
+            new_dir = os.path.join(self.cur_dir, self.name)
+            if not os.path.isdir(new_dir):
+                os.mkdir(new_dir)
+                with open(os.path.join(new_dir, "meta"), "w") as meta:
+                    meta.write(self.get_meta(new_dir))
+            self.update_items(items, new_dir)
+        elif len(albums):
+            self.update_albums(albums)
+        else:
+            self.update_items(items, self.cur_dir)
+        return self
+
+    def update_albums(self, albums):
+        for album in albums:
+            link = get_link(album)
+            album_data = self.get_album_data(album)
+            _album = Album(link, cur_dir=self.cur_dir,
+                           data=album_data)
+            self.albums.append(_album.run())
+
+    def update_items(self, items, cur_dir):
+        for item in items:
+            link = get_link(item)
+            _item = Item(link, cur_dir)
+            self.items.append(_item.run())
+
+    def get_album_data(self, album):
+
+        def gcc(string):
+            try:
+                return get_class_content(album, string).split(":")[1].strip()
+            except IndexError:
+                return ""
+
+        description = gcc('giDescription')
+        title = gcc('giTitle')
+        date = gcc('date')
+        size = gcc('size')
+        if description.lower() == 'no description':
+            description = ""
+        return {'description': description, 'title': title,
+                'date': date, 'size': size}
+
+    def get_albums_n_items(self):
+        albums = find_albums(self.tree)
+        items = find_items(self.tree)
+        additional_pages = self.tree.find('.//div[@id="gsPages"]')
+        if additional_pages is not None and len(additional_pages):
+            a_albums, a_items = self.additional_items(additional_pages.getchildren()[0].getchildren())
+            albums += a_albums
+            items += a_items
+        return albums, items
+
+    def additional_items(self, span_list):
+        "Find items in another pages into that album"
+        if span_list is None or not len(span_list):
+            return [], []
+        items_list = []
+        albums_list = []
+        for span in span_list:
+            a = span.find('a')
+            # it isn't span for current page
+            if a is not None:
+                tree = get_tree(a.attrib['href'])
+                items_list += find_items(tree)
+                albums_list += find_albums(tree)
+        return albums_list, items_list
+
+    def dumps(self):
+        albums = []
+        items = []
+        for album in self.albums:
+            albums.append(album.dumps())
+        if len(self.items):
+            for item in self.items:
+                items.append(item.dumps())
+        result = {'attributes': self.attributes,
+                  'albums': albums,
+                  'items': items}
+        return cPickle.dumps(result)
+
+    def get_type(self):
+        return len(self.albums) == 0 and "album" or "collection"
+
 
 def main():
-    gallery_url = GALLERY
-    main_page = get_tree(gallery_url)
-    albums = main_page.find_class("giAlbumCell")
-    already_created()
-    albums_data = map(get_album_data, albums)
-    print albums_data
+    GALLERY="/gallery/v/ZhMPhotos/"
+    album = Album(GALLERY)
+    album.run()
 
 if __name__ == "__main__":
     main()
