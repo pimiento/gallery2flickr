@@ -11,11 +11,11 @@ from flickrapi import FlickrAPI, FlickrError
 LOG_FILE = "./logging"
 CONF_FILE = "config"
 
-formatter = logging.Formatter("%(asctime)s:%(message)s")
-hndler = logging.FileHandler('/tmp/i2s.log')
-hndler.setFormatter(formatter)
 logger = logging.getLogger('i2s')
-logger.addHanler(formatter)
+formatter = logging.Formatter("%(asctime)s-:-%(message)s")
+hndler = logging.FileHandler('logging')
+hndler.setFormatter(formatter)
+logger.addHandler(hndler)
 logger.setLevel(logging.INFO)
 
 def my_log(text, filename=LOG_FILE):
@@ -24,17 +24,23 @@ def my_log(text, filename=LOG_FILE):
 
 def get_config(configfile=CONF_FILE):
     global variables
+    variables = {}
     config = ConfigParser.ConfigParser()
     config.read(configfile)
+
     if config.sections == []:
-        variables = {}
         return None
+
     for section in config.sections():
-        for option in config.options(option):
-            variables[option]=config.get(section, option)
+        for key, value in config.items(section):
+            variables[key]=value
+
+get_config()
+DOMAIN = variables.get('domain', 'www.example.com')
+GALLERY = variables.get('gallery', '/gallery/v/example/')
+FAST_MODE = variables.get('fast_mode', 0)
 
 def get_flickr():
-    get_config()
     flickr = FlickrAPI(variables.get('API_KEY'), variables.get('SECRET'),
                        variables.get('TOKEN', None))
     (token, frob) = flickr.get_token_part_one(perms='write')
@@ -43,10 +49,8 @@ def get_flickr():
     flickr.get_token_part_two((token, frob))
     return flickr
 
-flickr = get_flickr()
-DOMAIN = variables.get('domain', 'www.example.com')
-GALLERY = variables.get('gallery', '/gallery/v/example/')
-FAS_MODE = variables.get('fast_mode', 0)
+# flickr = get_flickr()
+flickr = None
 
 def already_created(filename=LOG_FILE):
     try:
@@ -60,15 +64,16 @@ def already_created(filename=LOG_FILE):
         UPLOADED = {}
         PHOTOSETS = {}
         COLLECTIONS = {}
-        for line in content:
-            line = line.replace('\\n', '\n')
-            flag, title, obj_id = line.split(":::")
+        for log_line in content:
+            date, info = log_line.split('-:-')
+            line = info.replace('\\n', '\n')
+            flag, title, obj_path = line.split(":::")
             if "photo" in flag:
-                UPLOADED[title] = obj_id
+                UPLOADED[title] = obj_path
             elif "album" in flag:
-                PHOTOSETS[title] = obj_id
+                PHOTOSETS[title] = obj_path
             elif "collection" in flag:
-                COLLECTIONS[title] = obj_id
+                COLLECTIONS[title] = obj_path
     finally:
         content.close()
 
