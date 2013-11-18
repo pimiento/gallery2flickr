@@ -2,73 +2,202 @@
 # -*- coding: utf-8 -*-
 import os
 import urllib2
+import logging
+import threading
+import ConfigParser
 from lxml import html
-from flickrapi import FlickrAPI
+from flickrapi import FlickrAPI, FlickrError
 
-DOMAIN = "http://example.com"
+LOG_FILE = "./logging"
+CONF_FILE = "config"
+
+formatter = logging.Formatter("%(asctime)s:%(message)s")
+hndler = logging.FileHandler('/tmp/i2s.log')
+hndler.setFormatter(formatter)
+logger = logging.getLogger('i2s')
+logger.addHanler(formatter)
+logger.setLevel(logging.INFO)
+
+def my_log(text, filename=LOG_FILE):
+    text = text.replace('\n', '\\n')
+    logger.info(text)
+
+def get_config(configfile=CONF_FILE):
+    global variables
+    config = ConfigParser.ConfigParser()
+    config.read(configfile)
+    if config.sections == []:
+        variables = {}
+        return None
+    for section in config.sections():
+        for option in config.options(option):
+            variables[option]=config.get(section, option)
+
+def get_flickr():
+    get_config()
+    flickr = FlickrAPI(variables.get('API_KEY'), variables.get('SECRET'),
+                       variables.get('TOKEN', None))
+    (token, frob) = flickr.get_token_part_one(perms='write')
+    if not token:
+        raw_input("Press ENTER after you authorized this program")
+    flickr.get_token_part_two((token, frob))
+    return flickr
+
+flickr = get_flickr()
+DOMAIN = variables.get('domain', 'www.example.com')
+GALLERY = variables.get('gallery', '/gallery/v/example/')
+FAS_MODE = variables.get('fast_mode', 0)
+
+def already_created(filename=LOG_FILE):
+    try:
+        content = open(filename, 'r')
+    except IOError:
+        raise IOError("There is no log-file %s" % filename)
+    else:
+        global UPLOADED
+        global PHOTOSETS
+        global COLLECTIONS
+        UPLOADED = {}
+        PHOTOSETS = {}
+        COLLECTIONS = {}
+        for line in content:
+            line = line.replace('\\n', '\n')
+            flag, title, obj_id = line.split(":::")
+            if "photo" in flag:
+                UPLOADED[title] = obj_id
+            elif "album" in flag:
+                PHOTOSETS[title] = obj_id
+            elif "collection" in flag:
+                COLLECTIONS[title] = obj_id
+    finally:
+        content.close()
+
+
 get_class_content = lambda elem, class_name: reduce(lambda x,y: x + " " + y,
                                                     map(lambda x:x.text_content().strip(),
                                                         elem.find_class(class_name)),
                                                     "").strip()
 
 get_link = lambda elem: elem.find('./div/a').attrib['href']
-
 get_tree = lambda link: html.fromstring(urllib2.urlopen(DOMAIN + link).read())
-
 get_image = lambda tree: DOMAIN + tree.find('.//div[@id="gsImageView"]').find('img').attrib['src']
 
-API_KEY = "key"
-SECRET = "secret"
 
-flickr = FlickrAPI(API_KEY, SECRET)
-(token, frob) = flickr.get_token_part_one(perms='write')
-if not token:
-    raw_input("Press ENTER after you authorized this program")
-flickr.get_token_part_two((token, frob))
+def get_image_link(tree):
+    image_link = None
+    try:
+        image_link = get_image(tree)
+    except AttributeError:
+        # probably there is video instead of image
+        image_link = tree.find('.//div[@id="gsImageView"]//param[@name=\"FileName\"]').attrib['value']
+    return image_link
 
-def get_file(item):
+def get_items_cells(link):
+    tree = get_tree(link)
+    items = tree.find_class('giItemCell')
+    return items, tree
+
+def additional_items(span_list):
+    items_list = []
+    for span in span_list:
+        # it isn't span for current page
+        if span.find('a') is not None:
+            items_cells, _ = get_items_cells(span.find('a').attrib['href'])
+            items_list += items_cells
+    return items_list
+
+def get_file(item, commint=True):
     link = item['image']
     filename = os.path.basename(link)
+    if not commint:
+        return filename
     download_file = urllib2.urlopen(link).read()
     with open(filename, 'w') as fn:
         fn.write(download_file)
     return filename
 
-def create_album(title, description, collection_data):
-    print("Creating album \"%s\"" % title)
-    photoset = flickr.photosets_create(title=title, description=description,
-                                       primary_photo_id=collection_data[0][0]).getchildren()[0]
-    photoset_id = photoset.attrib['id']
-    for photo in collection_data[1:]:
-        flickr.photosets_addPhoto(photoset_id=photoset_id, photo_id=photo[0])
+def create_photoset(title, description, album_data):
+    if title in PHOTOSETS:
+        print('%s is already created' % title)
+        photoset_id = PHOTOSETS[title]
+    else:
+        photoset = flickr.photosets_create(title=title, description=description,
+                                           primary_photo_id=album_data[0][0]).getchildren()[0]
+        photoset_id = photoset.attrib['id']
+        print('creating photoset %s (%s)' % (title, photoset_id))
+        my_log('album:::%s:::%s' % (title, photoset_id))
+
+    for photo in album_data[1:]:
+        try:
+            flickr.photosets_addPhoto(photoset_id=photoset_id, photo_id=photo[0])
+        except FlickrError:
+            continue
+        print('adding photo %s to photoset %s' % (photo[0], photoset_id))
+    return photoset_id
 
 def create_items(items_data, album):
     result = []
     for item in items_data:
-        upload_file = get_file(item)
-        photo_id = flickr.upload(filename=upload_file, title=item['title'],
+        filename = get_file(item, commint=False)
+        if item['title'] in UPLOADED:
+            print('%s is already uploaded' % item['title'])
+            photo_id = UPLOADED[item['title']]
+        elif filename in UPLOADED:
+            print('%s is already uploaded' % filename)
+            photo_id = UPLOADED[filename]
+        else:
+            upload_file = get_file(item)
+            photo_id = flickr.upload(filename=upload_file, title=item['title'],
                                  description=item['description']).find('photoid').text
-        os.unlink(upload_file)
-        dl = item['date'].split('/')
-        date = "%s-%s-%s" % (dl[2], dl[0], dl[1])
-        flickr.photos_setDates(photo_id=photo_id, date_posted=date)
+            print('uploading photo %s (%s)' % (item['title'], photo_id))
+            my_log('photo:::%s:::%s' % (upload_file, photo_id))
+            os.unlink(upload_file)
+            dl = item['date'].split('/')
+            date = "%s-%s-%s" % (dl[2], dl[0], dl[1])
+            flickr.photos_setDates(photo_id=photo_id, date_posted=date)
         result.append([photo_id, item['title'], item['description']])
     return result
 
-def get_album_data(album):
+def get_album_data(album, fast=FAST_MODE):
     description = get_class_content(album, 'giDescription')
     title = get_class_content(album, 'giTitle').split(":")[1].strip()
     link = get_link(album)
     date = get_class_content(album, 'date').split(":")[1].strip()
     if description.lower() == 'no description':
         description = date
-    collection_data = get_collection_data(link, description)
-    create_album(title, description, collection_data)
-    return collection_data
+    inner_tree = get_tree(link)
+    inner_albums = inner_tree.find_class('giAlbumCell')
+    if fast:
+        if title in PHOTOSETS:
+            print('%s is already created' % title)
+            return PHOTOSETS[title]
+        elif title in COLLECTIONS:
+            print("collection %s is already created" % title)
+            return COLLECTIONS[title]
+    if bool(inner_albums):
+        # Superocollection
+        print("photoset %s contains another photosets" % title)
+        inner_albums = map(get_album_data, inner_albums)
+        if title in COLLECTIONS:
+            print("collection %s is already created" % title)
+            return COLLECTIONS[title]
+        else:
+            collection_id = flickr.collections_create(title=title, description=description).getchildren()[0].attrib['id']
+            print("create collection %s (%s)" % (title, collection_id))
+            my_log('collection:::%s:::%s' % (title, collection_id))
+            flickr.collections_editSets(collection_id=collection_id, photoset_ids=','.join(inner_albums))
+            return collection_id
+    else:
+        album_data = get_album_inner_data(link, description)
+        photoset = create_photoset(title, description, album_data)
+        return photoset
 
-def get_collection_data(link, album_description):
-    tree = get_tree(link)
-    items = tree.find_class('giItemCell')
+def get_album_inner_data(link, album_description):
+    items, tree = get_items_cells(link)
+    additional_pages = tree.find('.//div[@id="gsPages"]')
+    if additional_pages is not None:
+        items_plus = additional_items(additional_pages.getchildren()[0].getchildren())
+        items += items_plus
     items_data = map(get_item_data, items)
     items_id = create_items(items_data, album_description)
     return items_id
@@ -81,25 +210,35 @@ def get_item_data(item):
 
 def get_data(link):
     tree = get_tree(link)
-    description_block = tree.find_class('gcBackground1')[0]
+    full_size = tree.find('.//a[@title=\"Full Size\"]')
+    if full_size is not None:
+        description_block = tree.find_class('giInfo')[0]
+        image_link = full_size.attrib['href']
+    else:
+        description_block = tree.find_class('gcBackground1')[0]
+        image_link = description_block.find(".//a")
+
     date = get_class_content(description_block, 'date').split(":")[1]
     owner = get_class_content(description_block, 'owner').split(":")[1]
     description = get_class_content(description_block, 'giDescription')
-    image_link = description_block.find(".//a")
+
     if image_link is None:
-        image_link = get_image(tree)
+        image_link = get_image_link(tree)
+    elif full_size is not None:
+        image_link = DOMAIN + image_link
     else:
         # get original sized image
         original_size_link = DOMAIN + image_link.attrib['href']
         new_tree = get_tree(link)
-        image_link = get_image(new_tree)
+        image_link = get_image_link(new_tree)
     return dict(date=date.strip(),owner=owner.strip(),description=description,
                 image=image_link.strip())
 
 def main():
-    gallery_url = "/gallery/v/mygallery"
+    gallery_url = GALLERY
     main_page = get_tree(gallery_url)
     albums = main_page.find_class("giAlbumCell")
+    already_created()
     albums_data = map(get_album_data, albums)
     print albums_data
 

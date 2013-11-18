@@ -1,5 +1,9 @@
-# there is config is like var=value
-API_KEY=0123456789ABCDEF
-SECRET=0123456789
-FAST_MODE=0
-DOMAIN=http://example.com
+# there is config is like ini-file
+[Gallery]
+DOMAIN = http://example.com
+GALLERY = /gallery/v/example/
+[Flickr]
+API_KEY = 0123456789abcde
+SECRET = 124356420
+[other]
+FAST_MODE = 0
