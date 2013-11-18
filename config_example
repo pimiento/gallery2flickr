@@ -1,0 +1,5 @@
+# there is config is like var=value
+API_KEY=0123456789ABCDEF
+SECRET=0123456789
+FAST_MODE=0
+DOMAIN=http://example.com
