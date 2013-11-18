@@ -1,9 +1,6 @@
-# there is config is like ini-file
-[Gallery]
-DOMAIN = http://example.com
-GALLERY = /gallery/v/example/
-[Flickr]
-API_KEY = 0123456789abcde
-SECRET = 124356420
-[other]
+# there is config is like python script
+DOMAIN = "http://example.com"
+GALLERY = "/gallery/v/example/"
+API_KEY = "0123456789abcde"
+SECRET = "124356420"
 FAST_MODE = 0

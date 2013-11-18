@@ -2,55 +2,24 @@
 # -*- coding: utf-8 -*-
 import os
 import urllib2
-import logging
-import threading
-import ConfigParser
 from lxml import html
+from configuration import *
+from mylog import my_log, LOG_FILE
 from flickrapi import FlickrAPI, FlickrError
 
-LOG_FILE = "./logging"
-CONF_FILE = "config"
-
-logger = logging.getLogger('i2s')
-formatter = logging.Formatter("%(asctime)s-:-%(message)s")
-hndler = logging.FileHandler('logging')
-hndler.setFormatter(formatter)
-logger.addHandler(hndler)
-logger.setLevel(logging.INFO)
-
-def my_log(text, filename=LOG_FILE):
-    text = text.replace('\n', '\\n')
-    logger.info(text)
-
-def get_config(configfile=CONF_FILE):
-    global variables
-    variables = {}
-    config = ConfigParser.ConfigParser()
-    config.read(configfile)
-
-    if config.sections == []:
-        return None
-
-    for section in config.sections():
-        for key, value in config.items(section):
-            variables[key]=value
-
-get_config()
-DOMAIN = variables.get('domain', 'www.example.com')
-GALLERY = variables.get('gallery', '/gallery/v/example/')
-FAST_MODE = variables.get('fast_mode', 0)
 
 def get_flickr():
-    flickr = FlickrAPI(variables.get('API_KEY'), variables.get('SECRET'),
-                       variables.get('TOKEN', None))
-    (token, frob) = flickr.get_token_part_one(perms='write')
-    if not token:
-        raw_input("Press ENTER after you authorized this program")
-    flickr.get_token_part_two((token, frob))
+    if TOKEN is None:
+        flickr = FlickrAPI(API_KEY, SECRET)
+        (token, frob) = flickr.get_token_part_one(perms='write')
+        if not token:
+            raw_input("Press ENTER after you authorized this program")
+        flickr.get_token_part_two((token, frob))
+    else:
+        flickr = FlickrAPI(API_KEY, SECRET, TOKEN)
     return flickr
 
-# flickr = get_flickr()
-flickr = None
+flickr = get_flickr()
 
 def already_created(filename=LOG_FILE):
     try:
