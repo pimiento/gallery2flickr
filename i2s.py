@@ -1,44 +1,20 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 import os
+import string
+import urllib
 import cPickle
 import urllib2
 from lxml import html
 from configuration import *
 from mylog import my_log, LOG_FILE
-from flickrapi import FlickrAPI, FlickrError
 
-
-def get_flickr():
-    if TOKEN is None:
-        flickr = FlickrAPI(API_KEY, SECRET)
-        (token, frob) = flickr.get_token_part_one(perms='write')
-        if not token:
-            raw_input("Press ENTER after you authorized this program")
-        flickr.get_token_part_two((token, frob))
-    else:
-        flickr = FlickrAPI(API_KEY, SECRET, TOKEN)
-    return flickr
-
-flickr = get_flickr()
-
-def is_duplicate_photoset(title, photosets):
-    if len(filter(lambda x: x[0]==title, photosets)) > 1:
-        raise Exception("Duplicate photoset: %s: %s (%s)" % photoset)
-
-def get_photosets():
-    if USER_ID is None:
-        return []
-    res = flickr.photosets_getList(user_id=USER_ID, per_page=500)
-    if not len(res):
-        return []
-    photosets = [[x.find('title').text, x.find('description').text,
-                  x.attrib['id']] for x in res.getchildren()[0].getchildren()]
-    for photoset in photosets:
-        is_duplicate_photoset(photoset[0], photosets)
-    return photosets
-
-photosets = get_photosets()
+def upload_machine(path):
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    script = os.path.join(script_dir, "uploader.py")
+    for album in os.listdir(path):
+        album_path = os.path.join(path, album)
+        os.spawnlp(os.P_NOWAIT, script, script, album_path, "/dev/null")
 
 get_class_content = lambda elem, class_name: reduce(lambda x,y: x + " " + y,
                                                     map(lambda x:x.text_content().strip(),
@@ -287,6 +263,7 @@ class Album(object):
 def main():
     GALLERY="/gallery/v/ZhMPhotos/"
     album = Album(GALLERY)
+    upload_machine(get_name(GALLERY))
     album.run()
 
 if __name__ == "__main__":
