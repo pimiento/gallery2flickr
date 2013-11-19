@@ -22,5 +22,5 @@ def get_flickr(API_KEY, SECRET, TOKEN=None):
             raw_input("Press ENTER after you authorized this program")
         flickr.get_token_part_two((token, frob))
     else:
-        flickr = FlickrAPI(API_KEY, SECRET, TOKEN)
+        flickr = FlickrAPI(api_key=API_KEY, secret=SECRET, token=TOKEN)
     return flickr

@@ -234,7 +234,8 @@ class Album(object):
 def main():
     GALLERY="/gallery/v/ZhMPhotos/"
     album = Album(GALLERY)
-    # upload_machine(get_name(GALLERY))
+    if sys.argv[1] == "upload":
+        upload_machine(get_name(GALLERY))
     album.run()
 
 if __name__ == "__main__":
