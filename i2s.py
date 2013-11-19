@@ -177,6 +177,10 @@ class Album(object):
         albums = find_albums(self.tree)
         items = find_items(self.tree)
         additional_pages = self.tree.find('.//div[@id="gsPages"]')
+        if additional_pages is None:
+            # It can be another designed album
+            additional_pages = self.tree.find('.//div[@class="gsPages"]')
+
         if additional_pages is not None and len(additional_pages):
             a_albums, a_items = self.additional_items(additional_pages.getchildren()[0].getchildren())
             albums += a_albums
