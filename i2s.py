@@ -11,8 +11,9 @@ def upload_machine(path):
     script_dir = os.path.dirname(os.path.abspath(__file__))
     script = os.path.join(script_dir, "uploader.py")
     for album in os.listdir(path):
-        album_path = os.path.join(path, album)
-        os.spawnlp(os.P_NOWAIT, script, script, album_path, "/dev/null")
+        if os.path.isdir(album):
+            album_path = os.path.join(path, album)
+            os.spawnlp(os.P_NOWAIT, script, script, album_path, "/dev/null")
 
 get_class_content = lambda elem, class_name: reduce(lambda x,y: x + " " + y,
                                                     map(lambda x:x.text_content().strip(),
@@ -36,10 +37,10 @@ class Item(object):
         self.cur_dir = cur_dir
         self.link = link
         self.tree = get_tree(self.link)
-        self.attributes = {'link': self.link}
+        self.title = get_class_content(self.tree, 'giTitle')
+        self.attributes = {'link': self.link, 'title': self.title}
 
     def run(self):
-        self.title = get_class_content(self.tree, 'giTitle')
         self.update_data(self.get_data())
         self.write_file()
         return self
@@ -50,8 +51,8 @@ class Item(object):
         if not os.path.isfile(path):
             with open(path, 'w') as fd:
                 fd.write(urllib2.urlopen(link).read())
-            with open(path + ".meta", "w") as meta:
-                meta.write(self.get_meta())
+        with open(path + ".meta", "w") as meta:
+            meta.write(self.get_meta())
             my_log("File %s is writted" % path)
 
     def get_meta(self):
@@ -226,13 +227,14 @@ class Album(object):
         return cPickle.dumps(result)
 
     def get_type(self):
-        return len(self.albums) == 0 and "album" or "collection"
-
+        if len(self.albums) == 0:
+            return "album"
+        return "collection"
 
 def main():
     GALLERY="/gallery/v/ZhMPhotos/"
     album = Album(GALLERY)
-    upload_machine(get_name(GALLERY))
+    # upload_machine(get_name(GALLERY))
     album.run()
 
 if __name__ == "__main__":
