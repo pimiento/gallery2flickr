@@ -1,8 +1,6 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
 import os
-import string
-import urllib
 import cPickle
 import urllib2
 from lxml import html
@@ -22,66 +20,23 @@ get_class_content = lambda elem, class_name: reduce(lambda x,y: x + " " + y,
                                                     "").strip()
 
 get_link = lambda elem: elem.find('./div/a').attrib['href']
-get_tree = lambda link: html.fromstring(urllib2.urlopen(DOMAIN + link).read())
+# get_tree = lambda link:
+def get_tree(link):
+    print link
+    return html.fromstring(urllib2.urlopen(DOMAIN + link).read())
 get_name = lambda path: os.path.basename(path.rstrip("/"))
 get_meta = lambda attributes: reduce(lambda x,y: x+"%s:::%s\n" % (y[0], y[1].replace('\n', '\\n')),
                                      attributes.iteritems(), "")
 find_items = lambda tree: tree.find_class('giItemCell')
 find_albums = lambda tree: tree.find_class('giAlbumCell')
 
-
-def create_photoset(title, description, album_data):
-    if title in PHOTOSETS:
-        print('%s is already created' % title)
-        photoset_id = PHOTOSETS[title]
-    else:
-        photoset = flickr.photosets_create(title=title, description=description,
-                                           primary_photo_id=album_data[0][0]).getchildren()[0]
-        photoset_id = photoset.attrib['id']
-        print('creating photoset %s (%s)' % (title, photoset_id))
-        my_log('album:::%s:::%s' % (title, photoset_id))
-
-    for photo in album_data[1:]:
-        try:
-            flickr.photosets_addPhoto(photoset_id=photoset_id, photo_id=photo[0])
-        except FlickrError:
-            continue
-        print('adding photo %s to photoset %s' % (photo[0], photoset_id))
-    return photoset_id
-
-def create_items(items_data, album):
-    result = []
-    for item in items_data:
-        filename = get_file(item, commint=False)
-        if item['title'] in UPLOADED:
-            print('%s is already uploaded' % item['title'])
-            photo_id = UPLOADED[item['title']]
-        elif filename in UPLOADED:
-            print('%s is already uploaded' % filename)
-            photo_id = UPLOADED[filename]
-        else:
-            upload_file = get_file(item)
-            photo_id = flickr.upload(filename=upload_file, title=item['title'],
-                                 description=item['description']).find('photoid').text
-            print('uploading photo %s (%s)' % (item['title'], photo_id))
-            my_log('photo:::%s:::%s' % (upload_file, photo_id))
-            os.unlink(upload_file)
-            dl = item['date'].split('/')
-            date = "%s-%s-%s" % (dl[2], dl[0], dl[1])
-            flickr.photos_setDates(photo_id=photo_id, date_posted=date)
-        result.append([photo_id, item['title'], item['description']])
-    return result
-
 class Item(object):
 
     def __init__(self, link, cur_dir):
         self.cur_dir = cur_dir
         self.link = link
-        self.name = get_name(self.link)
-        self.path = os.path.join(self.cur_dir, self.name)
         self.tree = get_tree(self.link)
-        self.attributes = {'link': self.link, 'name': self.name,
-                           'path': self.path}
+        self.attributes = {'link': self.link}
 
     def run(self):
         self.title = get_class_content(self.tree, 'giTitle')
