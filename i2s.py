@@ -46,12 +46,13 @@ class Item(object):
 
     def write_file(self):
         link = self.attributes['image']
-        if not os.path.isfile(self.path):
-            with open(self.path, 'w') as fd:
+        path = self.attributes['path']
+        if not os.path.isfile(path):
+            with open(path, 'w') as fd:
                 fd.write(urllib2.urlopen(link).read())
-            with open(self.path + ".meta", "w") as meta:
+            with open(path + ".meta", "w") as meta:
                 meta.write(self.get_meta())
-            my_log("File %s is writted" % self.path)
+            my_log("File %s is writted" % path)
 
     def get_meta(self):
         return get_meta(self.attributes)
@@ -78,8 +79,13 @@ class Item(object):
             original_size_link = image_link.attrib['href']
             new_tree = get_tree(original_size_link)
             image_link = self.get_image_link(new_tree)
+
+        image = image_link.strip()
+        name = get_name(image_link)
+        path = os.path.join(self.cur_dir, name)
         return dict(date=date.strip(), owner=owner.strip(),
-                    description=description, image=image_link.strip())
+                    description=description, image=image,
+                    name=name, path=path)
 
     def get_image_link(self, tree):
         image_link = None
@@ -115,15 +121,13 @@ class Album(object):
     def get_meta(self, cur_dir):
         attributes = self.attributes
         attributes['dir'] = cur_dir
+        attributes['type'] = self.get_type()
         return get_meta(attributes)
 
     def run(self):
         if not os.path.isdir(self.cur_dir):
             os.mkdir(self.cur_dir)
-            with open(os.path.join(self.cur_dir, "meta"), "w") as meta:
-                meta.write(self.get_meta(self.cur_dir))
             my_log("Album %s created" % self.cur_dir)
-
         albums, items = self.get_albums_n_items()
         if len(albums) and len(items):
             # If album has another albums and sole items too
@@ -140,12 +144,16 @@ class Album(object):
             self.update_albums(albums)
         else:
             self.update_items(items, self.cur_dir)
+        with open(os.path.join(self.cur_dir, "meta"), "w") as meta:
+            meta.write(self.get_meta(self.cur_dir))
         return self
 
     def update_albums(self, albums):
         for album in albums:
             link = get_link(album)
             album_data = self.get_album_data(album)
+            if album_data is None:
+                return None
             _album = Album(link, cur_dir=self.cur_dir,
                            data=album_data)
             self.albums.append(_album.run())
@@ -168,6 +176,8 @@ class Album(object):
         title = gcc('giTitle')
         date = gcc('date')
         size = gcc('size')
+        if size in ["", "0"]:
+            return None
         if description.lower() == 'no description':
             description = ""
         return {'description': description, 'title': title,
